@@ -1,0 +1,267 @@
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay, accuracy_score, f1_score, precision_score, roc_auc_score
+from sklearn.compose import ColumnTransformer
+from sklearn.model_selection import train_test_split
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler, FunctionTransformer
+from sklearn.base import BaseEstimator, TransformerMixin
+from category_encoders import OneHotEncoder, WOEEncoder, CountEncoder, TargetEncoder
+from sklearn.model_selection import learning_curve  
+from sklearn.svm import SVC
+
+class FeatureEngineer(BaseEstimator, TransformerMixin):
+    """Custom transformer for creating new features and transforming existing ones."""
+
+    def __init__(self, duplicate_checking=False):
+        self.cols_to_drop = [
+            "other_debtors_guarantors",
+            "telephone",
+            "foreign_worker",
+            "present_residence_since",
+            "existing_credits_count",
+            "people_liable_for_maintenance",
+            "installment_rate_pct_of_disp_income",
+            "personal_status_sex",
+        ]
+        self.duplicate_checking = duplicate_checking
+        
+    def fit(self, X, y=None):
+        return self
+    
+    def transform(self, X):
+        import pandas as pd
+        import numpy as np
+        
+        X = X.copy()
+        
+        # Drop unnecessary columns first (only if they exist)
+        cols_to_drop_existing = [c for c in self.cols_to_drop if c in X.columns]
+        X = X.drop(columns=cols_to_drop_existing)
+        
+        if self.duplicate_checking:
+            X['checking_2'] = X['checking_account_status'].copy()
+            X['checking_3'] = X['checking_account_status'].copy()
+
+        # Create new features (before dropping the source columns)
+        X['monthly_burden'] = X['credit_amount'] / X['duration_months']
+        X['monthly_burden_log'] = np.log(X['monthly_burden'])
+        
+        # Create duration bins BEFORE dropping duration_months
+        X['duration_bins'] = pd.qcut(X['duration_months'], q=5, labels=['very_short', 'short', 'medium', 'long', 'very_long'])
+        
+        # Merge purpose categories
+        X['purpose'] = X['purpose'].replace(
+            ['education', 'retraining'], 'personal_development'
+        )
+        X['purpose'] = X['purpose'].replace(
+            ['domestic appliances', 'repairs', 'others'], 'home_improvement'
+        )
+        
+        # Bin credit amount
+        X['credit_amount_bins'] = pd.cut(
+            X['credit_amount'],
+            bins=[0, 2000, 4000, 7000, 10000, 50000],
+            labels=['a', 'b', 'c', 'd', 'e']
+        )
+        
+        # Merge savings categories
+        X['savings_account_bonds'] = X['savings_account_bonds'].replace(
+            ['< 100 DM', '100 <= ... < 500 DM'], '< 500 DM'
+        )
+        X['savings_account_bonds'] = X['savings_account_bonds'].replace(
+            ['500 <= ... < 1000 DM', '>= 1000 DM'], '>= 500 DM'
+        )
+        
+        # Create age groups BEFORE dropping age_years
+        X['age_group'] = pd.cut(
+            X['age_years'],
+            bins=[0, 25, 35, 55, 100],
+            labels=['Young', 'Early_Career', 'Prime', 'Mature']
+        )
+        
+        # Merge housing categories
+        X['housing'] = X['housing'].replace(['for free', 'rent'], 'not_own')
+
+        # Merge credit history categories
+        X['credit_history'] = X['credit_history'].replace(
+            ['all credits here paid duly', 'no credits/all paid duly'], 'all credits paid'
+        )
+        
+        # Drop original columns that were transformed (AFTER creating derived features)
+        X = X.drop(columns=['duration_months', 'credit_amount', 'age_years', 'monthly_burden'])
+
+        return X
+
+
+def plot_learning_curve(estimator, X, y, cv=5, random_state=8, show_plot=True):
+    """
+    Diagnose if you need more data, better features, or tuning.
+    Returns figure and metrics dict for MLflow logging.
+    """
+    train_sizes, train_scores, val_scores = learning_curve(
+        estimator, X, y,
+        cv=cv,
+        scoring='roc_auc',
+        train_sizes=np.linspace(0.1, 1.0, 10),
+        n_jobs=-1,
+        random_state=random_state
+    )
+    
+    train_mean = train_scores.mean(axis=1)
+    train_std = train_scores.std(axis=1)
+    val_mean = val_scores.mean(axis=1)
+    val_std = val_scores.std(axis=1)
+
+    print(f"ROC AUC: {train_mean[-1]:.4f} ± {train_std[-1]:.4f} (train), {val_mean[-1]:.4f} ± {val_std[-1]:.4f} (validation)")
+    
+    # Diagnosis (print before showing plot to avoid blocking)
+    gap = train_mean[-1] - val_mean[-1]
+    
+    print("\n🔍 DIAGNOSIS:")
+    if val_mean[-1] < 0.70:
+        print("❌ Low validation score - Need better features or different model")
+    if gap > 0.10:
+        print("⚠️  High variance (overfitting) - Need regularization or more data")
+    if gap < 0.05 and val_mean[-1] < 0.75:
+        print("⚠️  High bias (underfitting) - Need more complex model or better features")
+    if val_mean[-1] > 0.75 and gap < 0.10:
+        print("✅ Good bias-variance tradeoff - Ready for tuning")
+    
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ax.plot(train_sizes, train_mean, label='Training score')
+    ax.plot(train_sizes, val_mean, label='Validation score')
+    ax.fill_between(train_sizes, train_mean - train_std, train_mean + train_std, alpha=0.1)
+    ax.fill_between(train_sizes, val_mean - val_std, val_mean + val_std, alpha=0.1)
+    ax.set_xlabel('Training Set Size')
+    ax.set_ylabel('AUC Score')
+    ax.set_title('Learning Curve')
+    ax.legend()
+    ax.grid(True)
+    
+    if show_plot:
+        plt.show()
+    
+    # Return figure and metrics for MLflow logging
+    learning_curve_metrics = {
+        'lc_train_auc_final': train_mean[-1],
+        'lc_train_auc_std': train_std[-1],
+        'lc_val_auc_final': val_mean[-1],
+        'lc_val_auc_std': val_std[-1],
+        'lc_bias_variance_gap': gap
+    }
+    
+    return fig, learning_curve_metrics
+
+
+def calculate_cost(y_true, y_pred, show_matrix=False, print_results=False):
+    # Define costs
+    cost_fp = 5  # Cost of false positive
+    cost_fn = 1  # Cost of false negative
+
+    # Get confusion matrix
+    cm = confusion_matrix(y_true, y_pred)
+    tn, fp, fn, tp = cm.ravel()
+    if show_matrix:
+        disp = ConfusionMatrixDisplay(confusion_matrix=cm)
+        disp.plot(cmap='Blues')
+        plt.title(f'Confusion Matrix :')
+        plt.grid(False)
+        plt.show()
+
+    # Calculate total cost
+    total_cost = (fp * cost_fp) + (fn * cost_fn)
+    if print_results:
+        print(f"Total Cost: {total_cost} ")
+    return total_cost
+
+
+def evaluate_model(X_val, y_val, fitted_model_pipeline, model_name):
+
+    y_pred = fitted_model_pipeline.predict(X_val)
+    y_pred_proba = fitted_model_pipeline.predict_proba(X_val)[:, 1]
+    
+    accuracy = accuracy_score(y_val, y_pred)
+    f1 = f1_score(y_val, y_pred)
+    precision = precision_score(y_val, y_pred)
+    roc_auc = roc_auc_score(y_val, y_pred_proba)
+    cost = calculate_cost(y_val, y_pred, show_matrix=False)
+    
+    print(f"\n{'─' * 40}")
+    print(f'Evaluation Metrics for {model_name}:')
+    print(f"   ROC AUC:  {roc_auc:.4f}")
+    print(f"   Accuracy: {accuracy:.4f}")
+    print(f"   F1:       {f1:.4f}")
+    print(f"   Precision:{precision:.4f}\n")
+    print(f"   Total Cost: {cost}\n")
+    
+    return {
+        'roc_auc': roc_auc,
+        'accuracy': accuracy,
+        'f1': f1,
+        'precision': precision,
+        'cost': cost
+    }
+
+def test_model(X_train, y_train, X_test, y_test, model_name="Model", tune_hyperparameters=False):
+    """
+    Test a model on the test set using various random seeds.
+    Note: This function uses lazy imports to avoid circular dependencies.
+    """
+    print(f"\n{'=' * 40}\n")
+    print(f'Testing {model_name} on Test Set Using Various Seeds:\n')
+
+    aucs = []
+    accuracies = []
+    f1s = []
+    precisions = []
+    costs = []
+    
+    if model_name == "SVC":
+        # Lazy import to avoid circular dependency
+        from scripts.train_svc import train_svc
+        
+        for seed in range(5):
+            print(f"--- Seed {seed} ---")
+            svc_model, pipeline_svc = train_svc(X_train, y_train, X_test, y_test, evaluate=True, tune=tune_hyperparameters, random_state=seed)
+            print("\n")
+            X_test_processed = pipeline_svc.transform(X_test)
+
+            scores = evaluate_model(X_test_processed, y_test, svc_model, model_name=model_name)
+            accuracies.append(scores['accuracy'])
+            f1s.append(scores['f1'])
+            precisions.append(scores['precision'])
+            aucs.append(scores['roc_auc'])
+            costs.append(scores['cost'])
+            print("\n")
+
+    if model_name == 'logistic_regression':
+        pass  # Placeholder for logistic regression testing
+
+    print(f"\n{'=' * 40}\n")
+    mean_auc = np.mean(aucs)
+    std_auc = np.std(aucs)
+    mean_accuracy = np.mean(accuracies)
+    std_accuracy = np.std(accuracies)
+    mean_f1 = np.mean(f1s)
+    std_f1 = np.std(f1s)
+    mean_precision = np.mean(precisions)
+    std_precision = np.std(precisions)
+    mean_cost = np.mean(costs)
+    std_cost = np.std(costs)
+
+    print(f'Final Test Set Performance for {model_name} over various seeds:')
+    print(f"   ROC AUC:  {mean_auc:.4f} ± {std_auc:.4f}")
+    print(f"   Accuracy: {mean_accuracy:.4f} ± {std_accuracy:.4f}")
+    print(f"   F1:       {mean_f1:.4f} ± {std_f1:.4f}")
+    print(f"   Precision:{mean_precision:.4f} ± {std_precision:.4f}")
+    print(f"   Total Cost: {mean_cost:.2f} ± {std_cost:.2f}\n")
+    return {
+        'roc_auc': (mean_auc, std_auc),
+        'accuracy': (mean_accuracy, std_accuracy),
+        'f1': (mean_f1, std_f1),
+        'precision': (mean_precision, std_precision),
+        'cost': (mean_cost, std_cost)
+    }
+

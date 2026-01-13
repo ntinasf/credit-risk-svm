@@ -1,5 +1,8 @@
 import os
 import pandas as pd
+from pathlib import Path
+
+PATH = Path(__file__).parent.parent
 
 col_names = [
     'checking_account_status',
@@ -110,15 +113,18 @@ def get_mappings():
             'A201': 'yes',
             'A202': 'no',
         },
-       
+        'class': {
+            '1': 1,
+            '2': 0,
+        },
     }
 
 
 def create_german_credit_csv():
     """Read german.data and create german_credit.csv with mappings."""
-    raw_path = os.path.join('data', 'raw', 'german.data')
-    out_dir = os.path.join('data', 'processed')
-    out_path = os.path.join(out_dir, 'german_credit.csv')
+    raw_path = PATH / 'data' / 'raw' / 'german.data'
+    out_dir = PATH / 'data' / 'processed'
+    out_path = out_dir / 'german_credit.csv'
     
     # Create output directory if it doesn't exist
     os.makedirs(out_dir, exist_ok=True)
@@ -147,7 +153,7 @@ def create_german_credit_csv():
         'duration_months', 'credit_amount',
         'installment_rate_pct_of_disp_income',
         'present_residence_since', 'age_years', 'existing_credits_count',
-        'people_liable_for_maintenance', 'class'
+        'people_liable_for_maintenance'
     ]
 
     for col in numeric_cols:

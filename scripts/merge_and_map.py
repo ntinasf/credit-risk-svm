@@ -1,12 +1,14 @@
 import os
 import pandas as pd
+from pathlib import Path
 
+PATH = Path(__file__).parent.parent
 
 def load_processed_tables():
-    processed_dir = os.path.join('data', 'processed')
-    cat_path = os.path.join(processed_dir, 'german_credit_categorical.csv')
-    num_path = os.path.join(processed_dir, 'german_credit_numeric.csv')
-    if not os.path.exists(cat_path) or not os.path.exists(num_path):
+    processed_dir = PATH / 'data' / 'processed'
+    cat_path = processed_dir / 'german_credit_categorical.csv'
+    num_path = processed_dir / 'german_credit_numeric.csv'
+    if not cat_path.exists() or not num_path.exists():
         raise FileNotFoundError(
             'Expected processed files at data/processed/*.csv. '
             'Run process_data.py first.'
@@ -44,7 +46,6 @@ def get_mappings():
             'A44': 'domestic appliances',
             'A45': 'repairs',
             'A46': 'education',
-            # A47 vacaction (does not exist)
             'A48': 'retraining',
             'A49': 'business',
             'A410': 'others',
@@ -106,10 +107,8 @@ def get_mappings():
             'A202': 'no',
         },
         'class': {
-            1: 'good',
-            2: 'bad',
-            '1': 'good',
-            '2': 'bad',
+            1: 1,
+            2: 0,
         },
     }
 
@@ -117,7 +116,7 @@ def get_mappings():
 def merge_and_map():
     df_cat, df_num = load_processed_tables()
 
-    # We'll keep the numeric 'class' (1=good, 2=bad). Drop duplicate numeric
+    # We'll keep the numeric 'class' (1=good, 0=bad). Drop duplicate numeric
     # columns from df_num that already exist in df_cat to avoid suffix clutter.
     drop_from_num = [
         'duration_months',
@@ -169,16 +168,8 @@ def merge_and_map():
             mapped = df[code_col].map(mappings[col])
             df[col] = mapped.where(mapped.notna(), df[code_col])
 
-    # Map class label from numeric 'class' to a readable 'class_label'
-    if 'class' in df.columns:
-        df['class_label'] = (
-            df['class'].map(mappings['class']).fillna(df['class'])
-        )
-
-    out_path = os.path.join(
-        'data', 'processed', 'german_credit_final.csv'
-    )
-    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    out_path = PATH / 'data' / 'processed' / 'german_credit_final.csv'
+    os.makedirs(out_path.parent, exist_ok=True)
     df.to_csv(out_path, index=False)
 
     print(

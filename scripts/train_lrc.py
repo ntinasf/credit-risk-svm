@@ -63,13 +63,14 @@ def lrc_preprocess(X, y):
         'monthly_burden_log',
     ]
 
-    encoding_pipeline_lrc = ColumnTransformer(transformers=[
-        ('one_hot', OneHotEncoder(cols=one_hot_cols_lrc, use_cat_names=True), one_hot_cols_lrc),
-        ('woe', WOEEncoder(cols=woe_cols_lrc), woe_cols_lrc),
-        ('scaler', StandardScaler(), numeric_cols),
-        ('count', CountEncoder(cols=count_cols_lrc), count_cols_lrc)
-    ], 
-    remainder='passthrough'
+    encoding_pipeline_lrc = ColumnTransformer(
+        transformers=[
+            ('one_hot', OneHotEncoder(cols=one_hot_cols_lrc, use_cat_names=True), one_hot_cols_lrc),
+            ('woe', WOEEncoder(cols=woe_cols_lrc), woe_cols_lrc),
+            ('scaler', StandardScaler(), numeric_cols),
+            ('count', CountEncoder(cols=count_cols_lrc), count_cols_lrc)
+        ], 
+        remainder='drop'
     )
 
     full_pipeline_lrc = Pipeline(steps=[

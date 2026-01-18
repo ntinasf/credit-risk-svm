@@ -1,0 +1,22 @@
+artifact_path: /Users/fotisn/code/repos/credit-risk-svm/mlruns/3/models/m-1d31391735974ddcbc8986c5e11b4808/artifacts
+flavors:
+  python_function:
+    env:
+      conda: conda.yaml
+      virtualenv: python_env.yaml
+    loader_module: mlflow.sklearn
+    model_path: model.pkl
+    predict_fn: predict
+    python_version: 3.13.9
+  sklearn:
+    code: null
+    pickled_model: model.pkl
+    serialization_format: cloudpickle
+    sklearn_version: 1.8.0
+mlflow_version: 3.8.1
+model_id: m-1d31391735974ddcbc8986c5e11b4808
+model_size_bytes: 5042656
+model_uuid: m-1d31391735974ddcbc8986c5e11b4808
+prompts: null
+run_id: 8904764a5af443d092fced61072143e5
+utc_time_created: '2026-01-18 19:24:57.635036'

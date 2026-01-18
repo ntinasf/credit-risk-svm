@@ -8,6 +8,7 @@ df['monthly_burden'] = df['credit_amount'] / df['duration']
 df['duration_bins'] = pd.qcut(df['duration'], q=5) # optional binning for non-linear models
 
 3 - Credit history: nominal, 5 categories, Weird Finding A34 (critical account/other credits exist) showed GOOD credit performance (contradicts theory!), Cramér's V: **0.2291 (small association)** -> **one hot encoding** (hybrid also applicable woe + critical account flag) merge (no credits/all paid)  one hot due to almost same frequency on two different categories
+
 4 - Purpose: nominal, 10 categories, Cramér's V: 0.1812 (small association) -> merge (education,retraining) and (repairs, other, domestic appliances) -> one hot encoding
 df['purpose'] = df['purpose'].replace({'A48': 'A46'})
 

@@ -25,7 +25,9 @@ from sklearn.model_selection import TunedThresholdClassifierCV
 from sklearn.metrics import make_scorer
 
 # Import from functions module (now works with relative path)
-from scripts.functions import plot_learning_curve, FeatureEngineer, evaluate_model, calculate_cost
+from scripts.functions import (plot_learning_curve, FeatureEngineer, 
+                               evaluate_model, cost_scorer_fn, 
+                               plot_confusion_matrix, plot_precision_recall_curve)
 
 
 warnings.filterwarnings("ignore", message="pkg_resources is deprecated")
@@ -39,31 +41,37 @@ def svc_preprocess(X, y):
     """Preprocess the data for SVC model."""
 
     one_hot_cols_svc = [
-        'purpose',
+        'credit_history', 
         'savings_account_bonds',
-        'job'
+        'present_residence_since',
+        'personal_status_sex',
+        'purpose', 
+        'checking_account_status',
+        'other_installment_plans',
+        #'age_group',
+        #'credit_amount_bins',
     ]
 
-    woe_cols_svc = [
+    woe_cols_svc = [        
         'present_employment_since',
-        'duration_bins'
+        'foreign_worker',
+        "installment_rate_pct_of_disp_income",
+        
     ]
 
     target_cols_svc = [
-        'checking_account_status',
-        'credit_history',
-        'housing'
+        'job',
+        'housing',
+        'property',
     ]
 
-    count_cols_svc = [
-        'property',
-        'other_installment_plans',
-        'credit_amount_bins',
-        'age_group'
-    ]
 
     numeric_cols = [
+        'credit_amount_squared',
+        'age_years',
+        "existing_credits_count",
         'monthly_burden_log',
+        'duration_to_age_ratio',       
     ]
 
     encoding_pipeline_svc = ColumnTransformer(
@@ -71,15 +79,15 @@ def svc_preprocess(X, y):
             ('one_hot', OneHotEncoder(cols=one_hot_cols_svc, use_cat_names=True), one_hot_cols_svc),
             ('woe', WOEEncoder(cols=woe_cols_svc), woe_cols_svc),
             ('scaler', StandardScaler(), numeric_cols),
-            ('count', CountEncoder(cols=count_cols_svc, normalize=True), count_cols_svc),
-            ('target', TargetEncoder(cols=target_cols_svc, smoothing=5), target_cols_svc)
+            ('target', TargetEncoder(cols=target_cols_svc, smoothing=1), target_cols_svc),
+            ('pass_through', 'passthrough', ['no_checking'])
         ],
         remainder='drop'
     )
 
     # Full pipeline combining feature engineering + encoding
     full_pipeline_svc = Pipeline([
-        ('feature_engineer', FeatureEngineer()),
+        ('feature_engineer', FeatureEngineer(duplicate_amount=True)),
         ('encoder', encoding_pipeline_svc)
     ])
 
@@ -88,8 +96,10 @@ def svc_preprocess(X, y):
     return X_processed, full_pipeline_svc
 
 
-def train_svc(X_train, y_train, X_val, y_val, preprocessing_pipeline, cv=CV, random_state=RANDOM_STATE,
-              tune=False, use_smote=False, evaluate=True, tune_threshold=False):
+def train_svc(X_train, y_train, X_val, y_val, preprocessing_pipeline,
+               cv=CV, random_state=RANDOM_STATE,
+              tune=False, use_smote=False, evaluate=True, 
+              tune_threshold=False, log_model=True):
     
     # Generate distinctive run name based on parameters
     smote_tag = "SMOTE" if use_smote else "NoSMOTE"
@@ -125,13 +135,13 @@ def train_svc(X_train, y_train, X_val, y_val, preprocessing_pipeline, cv=CV, ran
                 smote_sampler = SVMSMOTE(random_state=random_state)
 
                 svc_space = {
-                    'smote__k_neighbors': Integer(3, 10),
-                    'smote__sampling_strategy': Real(0.5, 1.0, prior='uniform'),
-                    'svc__C': Real(0.1, 20, prior='uniform'),
-                    'svc__gamma': Real(1e-4, 1, prior='uniform'),
+                    'smote__k_neighbors': Integer(2, 7),
+                    'smote__sampling_strategy': Real(0.5, 0.9, prior='uniform'),
+                    'svc__C': Real(1, 15, prior='uniform'),
+                    'svc__gamma': Real(1e-5, 1, prior='log-uniform'),
                     'svc__kernel': Categorical(['rbf', 'linear']),
                     'svc__tol': Real(1e-4, 1e-1, prior='log-uniform'),
-                    'svc__class_weight': Categorical(['balanced', None])
+                    #'svc__class_weight': Categorical(['balanced', None])
                 }
                 # Create a pipeline that first applies SMOTE then fits the model
                 # Use imblearn's Pipeline to support SMOTE
@@ -143,8 +153,8 @@ def train_svc(X_train, y_train, X_val, y_val, preprocessing_pipeline, cv=CV, ran
             else:
 
                 svc_space = {
-                    'C': Real(0.1, 20, prior='uniform'),
-                    'gamma': Real(1e-4, 1, prior='uniform'),
+                    'C': Real(1, 15, prior='uniform'),
+                    'gamma': Real(1e-5, 1, prior='log-uniform'),
                     'kernel': Categorical(['rbf', 'linear']),
                     'tol': Real(1e-4, 1e-1, prior='log-uniform'),
                     'class_weight': Categorical(['balanced', None])
@@ -156,12 +166,13 @@ def train_svc(X_train, y_train, X_val, y_val, preprocessing_pipeline, cv=CV, ran
             svc_tuned = BayesSearchCV(
                 estimator=model,
                 search_spaces=svc_space,
-                n_iter=20,
+                n_iter=25,
                 scoring='roc_auc',
                 cv=cv,
                 random_state=random_state,
                 n_jobs=-1,
-                verbose=0
+                verbose=0,
+                n_points=10
             )
             # Fit the model
             svc_tuned.fit(X_train_processed, y_train)
@@ -199,8 +210,17 @@ def train_svc(X_train, y_train, X_val, y_val, preprocessing_pipeline, cv=CV, ran
         print(f"\n{'─' * 40}\n")
         print('SVC\n')
         
-        # Get learning curve figure and metrics
-        lc_fig, lc_metrics = plot_learning_curve(svc, X_train_processed, y_train, cv=cv, random_state=random_state, show_plot=True)
+        # Create full pipeline for learning curve (preprocessing + model)
+        # This avoids data leakage by fitting preprocessing inside each CV fold
+        from sklearn.base import clone
+        lc_pipeline = Pipeline([
+            ('preprocessing', clone(preprocessing_pipeline)),
+            ('model', clone(svc) if not hasattr(svc, 'steps') else clone(svc))
+        ])
+        
+        # Get learning curve figure and metrics - use RAW X_train to avoid leakage
+        lc_fig, lc_metrics = plot_learning_curve(lc_pipeline, X_train, y_train, cv=cv, 
+                                                 random_state=random_state, show_plot=True)
         
         # Log learning curve metrics
         mlflow.log_metrics(lc_metrics)
@@ -212,7 +232,7 @@ def train_svc(X_train, y_train, X_val, y_val, preprocessing_pipeline, cv=CV, ran
         print("\n")        
 
         if tune_threshold:
-            cost_scorer = make_scorer(calculate_cost, greater_is_better=False)
+            cost_scorer = make_scorer(cost_scorer_fn, greater_is_better=False)
             tuned_cost_model = TunedThresholdClassifierCV(svc, scoring=cost_scorer, cv=cv)
             tuned_cost_model.fit(X_train_processed, y_train)
             mlflow.log_param("tuned_decision_threshold", tuned_cost_model.best_threshold_)
@@ -231,7 +251,24 @@ def train_svc(X_train, y_train, X_val, y_val, preprocessing_pipeline, cv=CV, ran
                 "val_f1": metrics_dict['f1'],
                 "val_precision": metrics_dict['precision'],
                 "val_cost": metrics_dict['cost'],
+                "val_avg_cost": metrics_dict['avg_cost'],
             })
+            
+            # Generate predictions for plots
+            y_val_pred = svc.predict(X_val_processed)
+            y_val_proba = svc.predict_proba(X_val_processed)[:, 1]
+            
+            # Plot and log confusion matrix
+            cm_fig = plot_confusion_matrix(y_val, y_val_pred, model_name="SVC", show_plot=False)
+            mlflow.log_figure(cm_fig, "confusion_matrix.png")
+            plt.close(cm_fig)
+            
+            # Plot and log precision-recall curve
+            pr_fig, pr_metrics = plot_precision_recall_curve(y_val, y_val_proba, 
+                                                             model_name="SVC", show_plot=False)
+            mlflow.log_figure(pr_fig, "precision_recall_curve.png")
+            mlflow.log_metric("val_average_precision", pr_metrics['average_precision'])
+            plt.close(pr_fig)
             
             # Set tags for easy filtering
             mlflow.set_tags({
@@ -241,7 +278,20 @@ def train_svc(X_train, y_train, X_val, y_val, preprocessing_pipeline, cv=CV, ran
                 "imbalance_handling": "SVMSMOTE" if use_smote else "None",
             })
 
-    return svc
+        # Create full pipeline (preprocessing + model) and log to MLflow
+        full_pipeline = Pipeline([
+            ('preprocessing', preprocessing_pipeline),
+            ('model', svc)
+        ])
+
+        if log_model:
+            mlflow.sklearn.log_model(
+                full_pipeline,
+                artifact_path="model",
+                registered_model_name="credit-risk-svc"
+            )
+
+    return svc, preprocessing_pipeline
         
 
 if __name__ == "__main__":
@@ -249,26 +299,19 @@ if __name__ == "__main__":
     home = Path.cwd()
     data_dir = home / "data"
     notebook_dir = home / "notebooks"
-    df = pd.read_csv(data_dir / "processed" / "german_credit.csv")
+    df = pd.read_csv(data_dir / "processed" / "train_data.csv")
     sklearn.set_config(transform_output="pandas")
 
-    X_temp, X_test, y_temp, y_test = train_test_split(
+    X_train, X_val, y_train, y_val = train_test_split(
         df.drop(columns=["class"]),
         df["class"],
-        test_size=0.15,
+        test_size=150,
         random_state=RANDOM_STATE,
         stratify=df["class"]
-    )
-    X_train, X_val, y_train, y_val = train_test_split(
-        X_temp,
-        y_temp,
-        test_size=len(X_test),
-        random_state=RANDOM_STATE,
-        stratify=y_temp
     )
 
     _, preprocessing_pipeline = svc_preprocess(X_train, y_train)
 
     train_svc(X_train, y_train, X_val, y_val, preprocessing_pipeline=preprocessing_pipeline, 
-              tune=True, use_smote=True, evaluate=True, tune_threshold=True)
+              tune=True, use_smote=True, evaluate=True, tune_threshold=True, log_model=True)
 

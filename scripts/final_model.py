@@ -35,45 +35,61 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 
 def train_final_model(X_train, y_train, X_val, y_val, 
                       RANDOM_STATE=8, CV=10, use_smote=True, evaluate=True):
-    """Train a final ensemble model using VotingClassifier."""
+    """Train all individual models and register them to MLflow.
+    
+    Each model is trained with its own preprocessing pipeline and registered
+    to MLflow model registry. The ensemble scoring is handled separately
+    by the EnsembleScorer class in score_model.py.
+    """
 
-    # Get preprocessing pipelines (fitted on training data)
+    print("=" * 60)
+    print("Training Logistic Regression Model...")
+    print("=" * 60)
+    
+    # Train LRC with its preprocessing
     _, lrc_pipeline = lrc_preprocess(X_train, y_train)
-    lrc_model = train_lrc(X_train, y_train, X_val=X_val, y_val=y_val, preprocessing_pipeline=lrc_pipeline,
-                          cv=CV, random_state=RANDOM_STATE, tune=True,
-                        use_smote=use_smote, evaluate=False, tune_threshold=True)
+    lrc_model, _ = train_lrc(X_train, y_train, X_val=X_val, y_val=y_val, 
+                              preprocessing_pipeline=lrc_pipeline,
+                              cv=CV, random_state=RANDOM_STATE, tune=True,
+                              use_smote=use_smote, evaluate=evaluate, tune_threshold=True)
 
+    print("\n" + "=" * 60)
+    print("Training Random Forest Model...")
+    print("=" * 60)
+    
+    # Train RFC with its preprocessing
     _, rfc_pipeline = rf_preprocess(X_train, y_train)
-    rfc_model = train_rfc(X_train, y_train, X_val=X_val, y_val=y_val, preprocessing_pipeline=rfc_pipeline,
-                          cv=CV, random_state=RANDOM_STATE, tune=True,
-                        evaluate=False, tune_threshold=True)
+    rfc_model, _ = train_rfc(X_train, y_train, X_val=X_val, y_val=y_val, 
+                              preprocessing_pipeline=rfc_pipeline,
+                              cv=CV, random_state=RANDOM_STATE, tune=True,
+                              evaluate=evaluate, tune_threshold=True)
 
+    print("\n" + "=" * 60)
+    print("Training SVC Model...")
+    print("=" * 60)
+    
+    # Train SVC with its preprocessing
     _, svc_pipeline = svc_preprocess(X_train, y_train)
-    svc_model = train_svc(X_train, y_train, X_val=X_val, y_val=y_val, preprocessing_pipeline=svc_pipeline, 
-                          cv=CV, random_state=RANDOM_STATE, tune=True,
-                        evaluate=False, tune_threshold=True,
-                        use_smote=use_smote)
+    svc_model, _ = train_svc(X_train, y_train, X_val=X_val, y_val=y_val, 
+                              preprocessing_pipeline=svc_pipeline, 
+                              cv=CV, random_state=RANDOM_STATE, tune=True,
+                              evaluate=evaluate, tune_threshold=True,
+                              use_smote=use_smote)
 
-    # Create VotingClassifier
-    voting_clf = VotingClassifier(
-        estimators=[
-            ('lrc', lrc_model),
-            ('rfc', rfc_model),
-            ('svc', svc_model)
-        ],
-        voting='soft',
-        weights=[1, 1, 1],
-        n_jobs=3
-    )
+    print("\n" + "=" * 60)
+    print("All models trained and registered to MLflow!")
+    print("=" * 60)
+    print("\nRegistered models:")
+    print("  - credit-risk-lrc")
+    print("  - credit-risk-rfc") 
+    print("  - credit-risk-svc")
+    print("\nUse score_model.py to create ensemble predictions on new data.")
 
-    # Fit the ensemble model
-    voting_clf.fit(X_train, y_train)
-
-    if evaluate:
-        print("Evaluating Final Ensemble Model on Validation Set:")
-        evaluate_model(X_val, y_val, voting_clf, model_name="VotingClassifier Ensemble")
-
-    return voting_clf
+    return {
+        'lrc': lrc_model,
+        'rfc': rfc_model,
+        'svc': svc_model
+    }
 
 if __name__ == "__main__":
     home = Path.cwd()

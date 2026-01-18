@@ -25,7 +25,7 @@ from sklearn.model_selection import TunedThresholdClassifierCV
 from sklearn.metrics import make_scorer
 
 # Import from functions module (now works with relative path)
-from scripts.functions import plot_learning_curve, FeatureEngineer, evaluate_model, calculate_cost
+from scripts.functions import plot_learning_curve, FeatureEngineer, evaluate_model, cost_scorer_fn, plot_confusion_matrix, plot_precision_recall_curve
 
 
 warnings.filterwarnings("ignore", message="pkg_resources is deprecated")
@@ -33,33 +33,40 @@ warnings.filterwarnings("ignore", category=UserWarning, module="pkg_resources")
 warnings.filterwarnings("ignore", category=FutureWarning)
 
 RANDOM_STATE = 8
-CV = 10
+CV = 5
 
 def lrc_preprocess(X, y):
     """Preprocess the data for LRC model."""
 
     one_hot_cols_lrc = [
-        'purpose',
-        'job'
+        'credit_history', 
+        'savings_account_bonds',
+        'present_residence_since',
+        'personal_status_sex',
+        'age_group',
+        'job',
+        'foreign_worker',
     ]
 
     woe_cols_lrc = [
         'checking_account_status',
-        'credit_history',
-        'savings_account_bonds',
-        'present_employment_since',
-        'housing',
-        'duration_bins'
+        'purpose',
+        'present_employment_since',      
+        'property',
+        'housing',                     
     ]
 
     count_cols_lrc = [
-        'property',
-        'other_installment_plans',
-        'credit_amount_bins',
-        'age_group'
+        "installment_rate_pct_of_disp_income",
+        'other_installment_plans',  
     ]
 
     numeric_cols = [
+        'duration_log',
+        'credit_log',
+        #'age_years',
+        "existing_credits_count",
+        #'duration_to_age_ratio_sqrt',
         'monthly_burden_log',
     ]
 
@@ -68,7 +75,8 @@ def lrc_preprocess(X, y):
             ('one_hot', OneHotEncoder(cols=one_hot_cols_lrc, use_cat_names=True), one_hot_cols_lrc),
             ('woe', WOEEncoder(cols=woe_cols_lrc), woe_cols_lrc),
             ('scaler', StandardScaler(), numeric_cols),
-            ('count', CountEncoder(cols=count_cols_lrc), count_cols_lrc)
+            ('count', CountEncoder(cols=count_cols_lrc, normalize=True), count_cols_lrc),
+            ('passthrough', 'passthrough', ['no_checking'])
         ], 
         remainder='drop'
     )
@@ -84,7 +92,7 @@ def lrc_preprocess(X, y):
 
 
 def train_lrc(X_train, y_train, X_val, y_val, preprocessing_pipeline, cv=CV, random_state=RANDOM_STATE,
-              tune=False, use_smote=False, evaluate=True, tune_threshold=False):
+              tune=False, use_smote=False, evaluate=True, tune_threshold=False, log_model=True):
     
     # Generate distinctive run name based on parameters
     smote_tag = "SMOTE" if use_smote else "NoSMOTE"
@@ -150,12 +158,13 @@ def train_lrc(X_train, y_train, X_val, y_val, preprocessing_pipeline, cv=CV, ran
             lrc_tuned = BayesSearchCV(
                 estimator=model,
                 search_spaces=lrc_space,
-                n_iter=20,
+                n_iter=25,
                 scoring='roc_auc',
                 cv=cv,
                 random_state=random_state,
                 n_jobs=-1,
-                verbose=0
+                verbose=0,
+                n_points=5
             )
             # Fit the model
             lrc_tuned.fit(X_train_processed, y_train)
@@ -193,8 +202,16 @@ def train_lrc(X_train, y_train, X_val, y_val, preprocessing_pipeline, cv=CV, ran
         print(f"\n{'─' * 40}\n")
         print('Logistic Regression\n')
         
-        # Get learning curve figure and metrics
-        lc_fig, lc_metrics = plot_learning_curve(lrc, X_train_processed, y_train, cv=cv, random_state=random_state, show_plot=True)
+        # Create full pipeline for learning curve (preprocessing + model)
+        # This avoids data leakage by fitting preprocessing inside each CV fold
+        from sklearn.base import clone
+        lc_pipeline = Pipeline([
+            ('preprocessing', preprocessing_pipeline),
+            ('model', clone(lrc) if not hasattr(lrc, 'steps') else clone(lrc))
+        ])
+        
+        # Get learning curve figure and metrics - use RAW X_train to avoid leakage
+        lc_fig, lc_metrics = plot_learning_curve(lc_pipeline, X_train, y_train, cv=cv, random_state=random_state, show_plot=True)
         
         # Log learning curve metrics
         mlflow.log_metrics(lc_metrics)
@@ -206,7 +223,7 @@ def train_lrc(X_train, y_train, X_val, y_val, preprocessing_pipeline, cv=CV, ran
         print("\n")        
 
         if tune_threshold:
-            cost_scorer = make_scorer(calculate_cost, greater_is_better=False)
+            cost_scorer = make_scorer(cost_scorer_fn, greater_is_better=False)
             tuned_cost_model = TunedThresholdClassifierCV(lrc, scoring=cost_scorer, cv=cv)
             tuned_cost_model.fit(X_train_processed, y_train)
             mlflow.log_param("tuned_decision_threshold", tuned_cost_model.best_threshold_)
@@ -225,17 +242,46 @@ def train_lrc(X_train, y_train, X_val, y_val, preprocessing_pipeline, cv=CV, ran
                 "val_f1": metrics_dict['f1'],
                 "val_precision": metrics_dict['precision'],
                 "val_cost": metrics_dict['cost'],
+                "val_avg_cost": metrics_dict['avg_cost'],
             })
+            
+            # Generate predictions for plots
+            y_val_pred = lrc.predict(X_val_processed)
+            y_val_proba = lrc.predict_proba(X_val_processed)[:, 1]
+            
+            # Plot and log confusion matrix
+            cm_fig = plot_confusion_matrix(y_val, y_val_pred, model_name="Logistic Regression", show_plot=False)
+            mlflow.log_figure(cm_fig, "confusion_matrix.png")
+            plt.close(cm_fig)
+            
+            # Plot and log precision-recall curve
+            pr_fig, pr_metrics = plot_precision_recall_curve(y_val, y_val_proba, model_name="Logistic Regression", show_plot=False)
+            mlflow.log_figure(pr_fig, "precision_recall_curve.png")
+            mlflow.log_metric("val_average_precision", pr_metrics['average_precision'])
+            plt.close(pr_fig)
             
             # Set tags for easy filtering
             mlflow.set_tags({
-                "model_family": "SVM",
+                "model_family": "Logistic Regression",
                 "preprocessing": "FeatureEngineer+Encoders",
                 "tuning_method": "BayesSearchCV" if tune else "None",
-                "imbalance_handling": "SVMSMOTE" if use_smote else "None",
+                "imbalance_handling": "SMOTE" if use_smote else "None",
             })
 
-    return lrc
+        # Create full pipeline (preprocessing + model) and log to MLflow
+        full_pipeline = Pipeline([
+            ('preprocessing', preprocessing_pipeline),
+            ('model', lrc)
+        ])
+
+        if log_model:
+            mlflow.sklearn.log_model(
+                full_pipeline,
+                artifact_path="model",
+                registered_model_name="credit-risk-lrc"
+            )
+
+    return lrc, preprocessing_pipeline
         
 
 if __name__ == "__main__":
@@ -243,26 +289,19 @@ if __name__ == "__main__":
     home = Path.cwd()
     data_dir = home / "data"
     notebook_dir = home / "notebooks"
-    df = pd.read_csv(data_dir / "processed" / "german_credit.csv")
+    df = pd.read_csv(data_dir / "processed" / "train_data.csv")
     sklearn.set_config(transform_output="pandas")
 
-    X_temp, X_test, y_temp, y_test = train_test_split(
+    X_train, X_val, y_train, y_val = train_test_split(
         df.drop(columns=["class"]),
         df["class"],
-        test_size=0.15,
+        test_size=150,
         random_state=RANDOM_STATE,
         stratify=df["class"]
-    )
-    X_train, X_val, y_train, y_val = train_test_split(
-        X_temp,
-        y_temp,
-        test_size=len(X_test),
-        random_state=RANDOM_STATE,
-        stratify=y_temp
     )
 
     _, preprocessing_pipeline = lrc_preprocess(X_train, y_train)
 
     train_lrc(X_train, y_train, X_val, y_val, preprocessing_pipeline=preprocessing_pipeline, 
-              tune=True, use_smote=False, evaluate=True, tune_threshold=False)
+              tune=True, use_smote=True, evaluate=True, tune_threshold=True, log_model=True)
 

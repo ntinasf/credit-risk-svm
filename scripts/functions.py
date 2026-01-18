@@ -63,9 +63,6 @@ class FeatureEngineer(BaseEstimator, TransformerMixin):
         X['credit_log'] = np.log(X['credit_amount'] + 1)
         X['duration_log'] = np.log(X['duration_months'] + 1)
         X['monthly_burden_log'] = np.log(X['monthly_burden'])
-        
-        X['duration_to_age_ratio_bins'] = pd.qcut(X['duration_to_age_ratio'], q=5,
-                                                  labels=['very_low', 'low', 'medium', 'high', 'very_high'])
 
         # Merge purpose categories
         X['purpose'] = X['purpose'].replace(

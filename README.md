@@ -2,8 +2,9 @@
 
 A personal portfolio project that builds an ensemble credit risk classifier using the German Credit Dataset. The project demonstrates end-to-end machine learning workflow including feature engineering, model training, hyperparameter tuning, and experiment tracking with MLflow.
 
-🚀 **[Try the Live Demo](https://your-streamlit-app.streamlit.app)** *(Coming Soon)*
+🚀 **[Try the Live Demo](https://your-streamlit-app.streamlit.app)**
 
+**[Project page]**(https://ntinasf.github.io/projects/credit-risk-classifier)
 ---
 
 ## 📋 Project Overview

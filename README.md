@@ -2,8 +2,9 @@
 
 This is a personal portfolio project that builds an ensemble credit risk classifier using the [German Credit Dataset](https://archive.ics.uci.edu/dataset/144/statlog+german+credit+data). The project demonstrates end-to-end machine learning workflow including data preprocessing, feature engineering, model training, hyperparameter tuning and experiment tracking with MLflow. The final product is a soft voting ensemble of three classifiers optimized for a business-relevant cost function. You can try out the model via a Streamlit web application.
 
- **[Try the Live Demo](https://your-streamlit-app.streamlit.app)**
+**[Try the Live Demo](https://credit-risk-svm-hokxpyoex9pcn95vardjas.streamlit.app)**
 
+ 
 ---
 
 ## Project Overview

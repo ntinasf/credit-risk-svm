@@ -1,0 +1,13 @@
+{
+  "weights": [
+    2.5,
+    1.5,
+    3.0
+  ],
+  "threshold": 0.63,
+  "component_models": [
+    "credit-risk-lrc",
+    "credit-risk-rfc",
+    "credit-risk-svc"
+  ]
+}

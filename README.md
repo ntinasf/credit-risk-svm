@@ -51,12 +51,13 @@ credit-risk-svm/
 │   ├── train_lrc.py           # Logistic Regression training script
 │   ├── train_rf.py            # Random Forest training script
 │   ├── final_model.py         # Ensemble training orchestration
+│   ├── score_ensemble.py      # Score ensemble and log to MLflow
 │   └── score_model.py         # Production scoring with EnsembleScorer
 ├── mlruns/                    # MLflow experiment artifacts
 ├── mlflow.db                  # MLflow tracking database
 ├── streamlit_app/             # Streamlit web application
 ├── requirements.txt
-├── export_models.py          # Export trained models for deployment
+├── export_models.py           # Export trained models for deployment
 └── README.md
 ```
 
@@ -124,23 +125,35 @@ This creates `train_data.csv` and `test_data.csv` in `data/processed/`.
 Train each model separately with MLflow tracking:
 
 ```bash
-# Train SVC with hyperparameter tuning and SMOTE
-python scripts/train_svc.py
+# Train SVC with hyperparameter tuning, SMOTE, and register to MLflow
+python scripts/train_svc.py --tune --smote --tune-threshold --log-model
 
 # Train Logistic Regression
-python scripts/train_lrc.py
+python scripts/train_lrc.py --tune --smote --tune-threshold --log-model
 
 # Train Random Forest
-python scripts/train_rf.py
+python scripts/train_rf.py --tune --tune-threshold --log-model
 ```
 
-### Step 4: Train the Ensemble
+Available arguments for training scripts:
+| Argument | Description |
+|----------|-------------|
+| `--tune` | Enable Bayesian hyperparameter tuning |
+| `--smote` | Use SMOTE for class imbalance (LRC/SVC only) |
+| `--tune-threshold` | Tune decision threshold for cost optimization |
+| `--log-model` | Register model to MLflow registry |
+| `--cv N` | Number of cross-validation folds |
+| `--val-size N` | Validation set size |
 
-Train all models and register the ensemble:
+### Step 4: Score the Ensemble
+
+Score the ensemble model and log metrics to MLflow:
 
 ```bash
-python scripts/final_model.py
+python scripts/score_ensemble.py --weights 2.5 1.5 3.0 --threshold 0.63
 ```
+
+This creates a new MLflow experiment (`credit-risk-ensemble`) with ensemble metrics for comparison.
 
 ### Step 5: View Experiments in MLflow
 
@@ -152,20 +165,21 @@ Open http://localhost:5000 to view experiments, compare runs, and inspect artifa
 
 ### Step 6: Score New Data
 
+For production scoring on new data:
+
 ```bash
 python scripts/score_model.py
 ```
 
 ---
 
-## Model Performance after Threshold Tuning
-
-| Model | ROC AUC | Avg Cost | 
-|-------|---------|----------|-----------|
-| SVC (SMOTE) | ~0.81 | ~0.43 | 
+## Model Performance on test set after threshold tuning
+| Model | ROC AUC | Avg Cost |
+|-------|---------|----------|
+| SVC (SMOTE) | ~0.81 | ~0.43 |
 | Logistic Regression | ~0.80 | ~0.49 |
-| Random Forest | ~0.82 | ~0.53 | 
-| **Ensemble** | **~0.79** | **~0.43** | Soft Voting |
+| Random Forest | ~0.82 | ~0.53 |
+| **Ensemble** (Soft Voting) | **~0.79** | **~0.43** |
 
 *Note: Results may vary slightly between runs.*
 

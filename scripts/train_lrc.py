@@ -1,37 +1,56 @@
+"""Train Logistic Regression model for credit risk classification.
+
+This script trains a Logistic Regression classifier with optional:
+- Bayesian hyperparameter tuning (BayesSearchCV)
+- SMOTE for class imbalance handling
+- Cost-sensitive threshold tuning
+- MLflow experiment tracking and model registry
+
+Usage:
+    python scripts/train_lrc.py --tune --smote --tune-threshold --log-model
+    python scripts/train_lrc.py --help
+"""
+
 import sys
+import warnings
 from pathlib import Path
-import sklearn
-from sklearn.model_selection import train_test_split
 
 # Add parent directory to path to enable imports
 script_dir = Path(__file__).parent
 sys.path.insert(0, str(script_dir.parent))
 
-import numpy as np
-import pandas as pd
 import matplotlib.pyplot as plt
 import mlflow
-from sklearn.linear_model import LogisticRegression
-from sklearn.compose import ColumnTransformer
-from sklearn.pipeline import Pipeline
-from imblearn.pipeline import Pipeline as ImbPipeline
-from sklearn.preprocessing import StandardScaler
-from category_encoders import OneHotEncoder, WOEEncoder, CountEncoder
-from skopt import BayesSearchCV
-from skopt.space import Real, Integer, Categorical
+import pandas as pd
+import sklearn
+from category_encoders import CountEncoder, OneHotEncoder, WOEEncoder
 from imblearn.over_sampling import SMOTE
-import warnings
-from sklearn.model_selection import TunedThresholdClassifierCV
+from imblearn.pipeline import Pipeline as ImbPipeline
+from sklearn.base import clone
+from sklearn.compose import ColumnTransformer
+from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import make_scorer
+from sklearn.model_selection import TunedThresholdClassifierCV, train_test_split
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
+from skopt import BayesSearchCV
+from skopt.space import Categorical, Integer, Real
 
-# Import from functions module (now works with relative path)
-from scripts.functions import plot_learning_curve, FeatureEngineer, evaluate_model, cost_scorer_fn, plot_confusion_matrix, plot_precision_recall_curve
+from scripts.functions import (
+    FeatureEngineer,
+    cost_scorer_fn,
+    evaluate_model,
+    plot_confusion_matrix,
+    plot_learning_curve,
+    plot_precision_recall_curve,
+)
 
-
+# Suppress warnings
 warnings.filterwarnings("ignore", message="pkg_resources is deprecated")
 warnings.filterwarnings("ignore", category=UserWarning, module="pkg_resources")
 warnings.filterwarnings("ignore", category=FutureWarning)
 
+# Constants
 RANDOM_STATE = 8
 CV = 5
 
@@ -204,7 +223,6 @@ def train_lrc(X_train, y_train, X_val, y_val, preprocessing_pipeline, cv=CV, ran
         
         # Create full pipeline for learning curve (preprocessing + model)
         # This avoids data leakage by fitting preprocessing inside each CV fold
-        from sklearn.base import clone
         lc_pipeline = Pipeline([
             ('preprocessing', preprocessing_pipeline),
             ('model', clone(lrc) if not hasattr(lrc, 'steps') else clone(lrc))
@@ -284,8 +302,45 @@ def train_lrc(X_train, y_train, X_val, y_val, preprocessing_pipeline, cv=CV, ran
     return lrc, preprocessing_pipeline
         
 
-if __name__ == "__main__":
+def parse_args():
+    """Parse command line arguments."""
+    import argparse
+    parser = argparse.ArgumentParser(
+        description="Train Logistic Regression model for credit risk classification.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
+    parser.add_argument("--tune", action="store_true", default=False,
+                        help="Enable Bayesian hyperparameter tuning")
+    parser.add_argument("--no-tune", dest="tune", action="store_false",
+                        help="Disable hyperparameter tuning (use defaults)")
+    parser.add_argument("--smote", action="store_true", default=False,
+                        help="Use SMOTE for class imbalance")
+    parser.add_argument("--no-smote", dest="smote", action="store_false",
+                        help="Disable SMOTE")
+    parser.add_argument("--tune-threshold", action="store_true", default=False,
+                        help="Tune decision threshold using cost-sensitive optimization")
+    parser.add_argument("--no-tune-threshold", dest="tune_threshold", action="store_false",
+                        help="Use default threshold (0.5)")
+    parser.add_argument("--evaluate", action="store_true", default=True,
+                        help="Evaluate model on validation set")
+    parser.add_argument("--no-evaluate", dest="evaluate", action="store_false",
+                        help="Skip evaluation")
+    parser.add_argument("--log-model", action="store_true", default=False,
+                        help="Log model to MLflow registry")
+    parser.add_argument("--no-log-model", dest="log_model", action="store_false",
+                        help="Don't log model to registry")
+    parser.add_argument("--cv", type=int, default=CV,
+                        help="Number of cross-validation folds")
+    parser.add_argument("--random-state", type=int, default=RANDOM_STATE,
+                        help="Random seed for reproducibility")
+    parser.add_argument("--val-size", type=int, default=150,
+                        help="Validation set size")
+    return parser.parse_args()
 
+
+if __name__ == "__main__":
+    args = parse_args()
+    
     home = Path.cwd()
     data_dir = home / "data"
     notebook_dir = home / "notebooks"
@@ -295,13 +350,15 @@ if __name__ == "__main__":
     X_train, X_val, y_train, y_val = train_test_split(
         df.drop(columns=["class"]),
         df["class"],
-        test_size=150,
-        random_state=RANDOM_STATE,
+        test_size=args.val_size,
+        random_state=args.random_state,
         stratify=df["class"]
     )
 
     _, preprocessing_pipeline = lrc_preprocess(X_train, y_train)
 
-    train_lrc(X_train, y_train, X_val, y_val, preprocessing_pipeline=preprocessing_pipeline, 
-              tune=True, use_smote=True, evaluate=True, tune_threshold=True, log_model=True)
+    train_lrc(X_train, y_train, X_val, y_val, preprocessing_pipeline=preprocessing_pipeline,
+              cv=args.cv, random_state=args.random_state,
+              tune=args.tune, use_smote=args.smote, evaluate=args.evaluate,
+              tune_threshold=args.tune_threshold, log_model=args.log_model)
 

@@ -27,14 +27,14 @@ CATEGORICAL_FEATURES = {
         "no checking account",
         "< 0 DM",
         "0 <= ... < 200 DM",
-        ">= 200 DM"
+        ">= 200 DM / salary assign."
     ],
     "credit_history": [
-        "no credits taken/all credits paid back duly",
-        "all credits at this bank paid back duly",
+        "no credits/all paid duly",
+        "all credits here paid duly",
         "existing credits paid duly",
-        "delay in paying off in the past",
-        "critical account/other credits existing"
+        "delay in paying off in past",
+        "critical/other credits exist"
     ],
     "purpose": [
         "car (new)",
@@ -75,7 +75,7 @@ CATEGORICAL_FEATURES = {
     ],
     "property": [
         "real estate",
-        "building society savings/life insurance",
+        "bldg society/life ins.",
         "car or other",
         "unknown/no property"
     ],
@@ -90,10 +90,10 @@ CATEGORICAL_FEATURES = {
         "for free"
     ],
     "job": [
-        "unemployed/unskilled non-resident",
+        "unemployed/unskilled non-res.",
         "unskilled resident",
         "skilled employee/official",
-        "management/self-employed/highly qualified"
+        "management/self-employed/etc"
     ],
     "telephone": [
         "none",
@@ -137,6 +137,30 @@ FEATURE_LABELS = {
     "people_liable_for_maintenance": "People Liable for Maintenance",
     "telephone": "Telephone",
     "foreign_worker": "Foreign Worker"
+}
+
+# Feature descriptions for hover tooltips
+FEATURE_HELP = {
+    "checking_account_status": "Status of the applicant's checking account at the bank",
+    "duration_months": "Duration of the loan in months",
+    "credit_history": "Past credit behavior and repayment history",
+    "purpose": "Purpose for which the loan is being requested",
+    "credit_amount": "Total amount of credit requested in Deutsche Marks",
+    "savings_account_bonds": "Amount in savings accounts or bonds",
+    "present_employment_since": "Duration of current employment",
+    "installment_rate_pct_of_disp_income": "Loan installment as percentage of disposable income (1-4)",
+    "present_residence_since": "Years at current residence (1-4 scale)",
+    "personal_status_sex": "Gender and marital status of applicant",
+    "other_debtors_guarantors": "Whether there are co-applicants or guarantors",
+    "property": "Most valuable property owned by applicant",
+    "age_years": "Age of the applicant in years",
+    "other_installment_plans": "Other ongoing installment plans (bank/stores)",
+    "housing": "Current housing situation of applicant",
+    "existing_credits_count": "Number of existing credits at this bank (1-4)",
+    "job": "Employment type and skill level",
+    "people_liable_for_maintenance": "Number of dependents (1-2)",
+    "telephone": "Whether applicant has a registered telephone",
+    "foreign_worker": "Whether applicant is a foreign worker"
 }
 
 
@@ -201,9 +225,13 @@ def display_prediction_results(results, input_data):
         st.markdown("---")
         st.progress(ensemble_proba, text=f"**Ensemble: {ensemble_proba*100:.1f}%**")
     
-    # Show input data summary
+    # Show input data summary in column format
     with st.expander("View Input Data"):
-        st.dataframe(input_data, use_container_width=True)
+        # Transpose to show features as rows for better readability
+        display_df = input_data.T.reset_index()
+        display_df.columns = ['Feature', 'Value']
+        display_df['Feature'] = display_df['Feature'].map(lambda x: FEATURE_LABELS.get(x, x))
+        st.dataframe(display_df, use_container_width=True, hide_index=True)
 
 
 def random_sample_section(sample_data, scorer):
@@ -281,14 +309,16 @@ def manual_input_section(scorer):
             for feature in feature_list[:half]:
                 label = FEATURE_LABELS.get(feature, feature)
                 options = CATEGORICAL_FEATURES[feature]
-                input_data[feature] = st.selectbox(label, options, key=f"cat_{feature}")
+                help_text = FEATURE_HELP.get(feature, None)
+                input_data[feature] = st.selectbox(label, options, key=f"cat_{feature}", help=help_text)
         
         with col2:
             st.markdown("** **")  # Spacer
             for feature in feature_list[half:]:
                 label = FEATURE_LABELS.get(feature, feature)
                 options = CATEGORICAL_FEATURES[feature]
-                input_data[feature] = st.selectbox(label, options, key=f"cat_{feature}")
+                help_text = FEATURE_HELP.get(feature, None)
+                input_data[feature] = st.selectbox(label, options, key=f"cat_{feature}", help=help_text)
         
         st.markdown("---")
         
@@ -302,13 +332,15 @@ def manual_input_section(scorer):
             for feature in numeric_list[:half_num]:
                 label = FEATURE_LABELS.get(feature, feature)
                 config = NUMERIC_FEATURES[feature]
+                help_text = FEATURE_HELP.get(feature, None)
                 input_data[feature] = st.number_input(
                     label,
                     min_value=config["min"],
                     max_value=config["max"],
                     value=config["default"],
                     step=config["step"],
-                    key=f"num_{feature}"
+                    key=f"num_{feature}",
+                    help=help_text
                 )
         
         with col4:
@@ -316,13 +348,15 @@ def manual_input_section(scorer):
             for feature in numeric_list[half_num:]:
                 label = FEATURE_LABELS.get(feature, feature)
                 config = NUMERIC_FEATURES[feature]
+                help_text = FEATURE_HELP.get(feature, None)
                 input_data[feature] = st.number_input(
                     label,
                     min_value=config["min"],
                     max_value=config["max"],
                     value=config["default"],
                     step=config["step"],
-                    key=f"num_{feature}"
+                    key=f"num_{feature}",
+                    help=help_text
                 )
         
         # Predict button
@@ -343,6 +377,26 @@ def main():
     An ensemble machine learning model that predicts credit risk for loan applicants.
     The model combines **Logistic Regression**, **Random Forest**, and **SVC** using soft voting.
     """)
+    
+    # Cost-sensitive optimization context
+    with st.expander("ℹ️ About the Model's Cost-Sensitive Approach", expanded=False):
+        st.markdown("""
+        This model is optimized for **minimizing business cost**, not just accuracy.
+        
+        According to the [German Credit Dataset](https://archive.ics.uci.edu/dataset/144/statlog+german+credit+data) documentation:
+        
+        | Prediction | Actual | Cost |
+        |------------|--------|------|
+        | Good Risk | Bad Risk (FP) | **5** |
+        | Bad Risk | Good Risk (FN) | **1** |
+        
+        **What this means:** It's 5× more costly to approve a loan for someone who will default 
+        than to reject a creditworthy applicant. Therefore, the model is intentionally **conservative** 
+        — it may classify some good-risk applicants as bad-risk to avoid the larger cost of defaults.
+        
+        This cost-aware approach reflects real-world lending where loan defaults typically cause 
+        greater financial harm than missed business opportunities.
+        """)
     
     # Load resources
     try:
